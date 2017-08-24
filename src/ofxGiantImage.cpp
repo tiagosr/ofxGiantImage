@@ -25,10 +25,12 @@ ofxGiantImage::~ofxGiantImage(){
 }
 
 //--------------------------------------------------------
-void ofxGiantImage::loadImage(string filePath){
+void ofxGiantImage::loadImage(string const & filePath){
     
-    // ofImage does a weird hack for the edges of openGL textures switch that off
-    ofDisableTextureEdgeHack();
+	bool textureHackWasEnabled = ofIsTextureEdgeHackEnabled();
+	// ofImage does a weird hack for the edges of openGL textures switch that off
+	if (textureHackWasEnabled)
+		ofDisableTextureEdgeHack();
 
     
     // load into a big image
@@ -38,60 +40,70 @@ void ofxGiantImage::loadImage(string filePath){
         cout << "I couldn't load the image from path: "<<filePath<<endl;
         return;
     }
-    if(!(img->type == OF_IMAGE_COLOR)){
-        cout << "WARNING the ofxTile can only display 3 channel color images now! "<<endl;
-        return;
-    }
+	
+	bool isGrayscale = true;
+	bool hasAlpha = false;
+	int bpp = img->getPixelsRef().getBytesPerPixel();
+	
+	int internalFormat = GL_RGB;
+	
+	switch (img->getImageType()) {
+	case OF_IMAGE_COLOR:
+		internalFormat = GL_RGB;
+		break;
+	case OF_IMAGE_COLOR_ALPHA:
+		internalFormat = GL_RGBA;
+		break;
+	case OF_IMAGE_GRAYSCALE:
+		internalFormat = GL_LUMINANCE;
+		break;
+	default:
+		cout << "unrecognized image type: " << img->getImageType() << " - failed to generate image" << endl;
+		img->clear();
+		delete img;
+		if (textureHackWasEnabled)
+			ofEnableTextureEdgeHack();
+		return;
+	}
+
+	
     
-    width = img->width;
-    height = img->height;
+    width = img->getWidth();
+    height = img->getHeight();
     cout << "Loaded source image of "<<width<<" by "<<height<<" pixels"<<endl;
     wtiles = (int) ceilf(width/(float)tileSize);
     htiles = (int) ceilf(height/(float)tileSize);
     
-    // in the special and stupid case that you load a source image that is smaller than the size of a tile just use the source image.
-    if( width < tileSize ||  height < tileSize){
-        unsigned char * imgpix = img->getPixels();
-        unsigned char tilepix[3*img->width*img->height];
-        ofTexture * tile = new ofTexture();
-        tile->allocate(img->width, img->height, GL_RGB);
-        tile->loadData(tilepix, img->width, img->height, GL_RGB);
-        tiles.push_back(tile);
-        img->clear();
-        delete img;
-        ofEnableTextureEdgeHack();
-        return;
-    }
-    
-    unsigned char * imgpix = img->getPixels();
-	unsigned char tilepix[3*tileSize*tileSize];
+    unsigned char * tilepix = new unsigned char[bpp*tileSize*tileSize];
     
     // now start making tiles!
-    for(int y = 0; y < htiles; y++){
-        for (int x = 0; x < wtiles; x++) {
+    for(int tile_y = 0; tile_y < htiles; tile_y++){
+        for (int tile_x = 0; tile_x < wtiles; tile_x++) {
             
-            int x1 = tileSize * x;
-            int y1 = tileSize * y;
-            //x1 = MIN(width - tileSize, x1);     // HACK -- this way the tiles on the far right edge stay within the bounds..
-            //y1 = MIN(height - tileSize, y1);    // HACK
+            int x1 = tileSize * tile_x;
+            int y1 = tileSize * tile_y;
             int tileWidth = MIN(tileSize, width - x1); // only necessary for the tiles on the far right
             int tileHeight = MIN(tileSize, height - y1); // only necessary for the tiles on the bottom row
             ofTexture * tile = new ofTexture();
 			
-			tile->allocate(tileWidth, tileHeight, GL_RGB);
+			tile->allocate(tileWidth, tileHeight, internalFormat);
             
-            // copy pixels into tilepix row by row
-            for (int iy = 0; iy < tileHeight; iy++) {
-                memcpy(&(tilepix[3 * (iy * tileWidth)]),
-                       &(imgpix[3 * ( x1 + (y1+iy)*img->width)]),
-                       3 * tileSize * sizeof(unsigned char));
-            }
-            
-			tile->loadData(tilepix, tileWidth, tileHeight, GL_RGB);
+			// copy pixels into tilepix row by row
+			for (int iy = 0; iy < tileHeight; iy++) {
+				auto line = img->getPixelsRef().getLine(y1 + iy).asPixels();
+				unsigned char * lineData = line.getData();
+				memcpy(
+					&(tilepix[bpp * (iy * tileWidth)]),
+					&(lineData[x1 * bpp]),
+					bpp * tileWidth * sizeof(unsigned char));
+			}
+			
+			tile->loadData(tilepix, tileWidth, tileHeight, internalFormat);
             tiles.push_back(tile);
-                        
         }
     }
+
+	delete tilepix;
     
     if( wtiles * htiles != tiles.size()){
         cout << "WARNING the tiler created a grid of "<<(wtiles*htiles)<<" tiles but the vector has "<<tiles.size()<<" tiles!"<<endl;
@@ -104,7 +116,8 @@ void ofxGiantImage::loadImage(string filePath){
     delete img;
     
     // switch the ofImage texture hack back on
-    ofEnableTextureEdgeHack();
+	if (textureHackWasEnabled)
+		ofEnableTextureEdgeHack();
 
 }
 
